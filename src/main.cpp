@@ -1,69 +1,8 @@
-// Libraries
-#include <Arduino.h>
-#include <SPI.h>
-#include <Wire.h>
-#include <driver/adc.h>
-#include <ATM90E3x.h>
-#include "IPEM_Hardware.h"
-#include <WiFiManager.h>
-
-
-// USER VARIABLES / DEFINES / STATIC / STRUCTURES / CONSTANTS -> Moved to IPEM_Hardware
+#include "support.h"
 
 // **************** FUNCTIONS AND ROUTINES ****************
-#define CAPTIVE_PORTAL_TIMEOUT 30
 
-bool runWiFiManager()
-{
-
-  /*
-   * Initialize WiFi and start captive portal to set connection credentials
-   */
-  WiFi.setHostname("Abacus eWall");
-  WiFi.mode(WIFI_AP); // explicitly set mode, esp defaults to STA+AP
-  WiFi.enableAP(true);
-
-  WiFiManager wifiManager;
-  // wifiManager.setDebugOutput(true);
-  //  wifiManager.debugPlatformInfo();
-  wifiManager.setTitle("Wallbox Configuration Portal");
-  wifiManager.setParamsPage(true);
-  //  const char *bufferStr = R"(
-
-  //   <!-- INPUT SELECT -->
-  //   <br/>
-  //   <label for='input_select'>INPUT 1</label>
-  //   <select name="input_select" id="input_select" class="button">
-  //   <option value="0">Analog </option>
-  //   <option value="1" selected>Digital</option>
-  //   </select>
-  //   )";
-
-  //   WiFiManagerParameter custom_html_inputs(bufferStr);
-  //   wifiManager.addParameter(&custom_html_inputs);
-  wifiManager.setSaveParamsCallback([&wifiManager]()
-                                    {
-                                      // inputs(*DI1);
-                                    });
-
-  wifiManager.setDarkMode(true);
-
-  // wifiManager.setConfigPortalTimeout(CAPATITIVE_PORTAL_TIMEOUT / 1000); //if nobody logs in to the portal, continue after timeout
-  wifiManager.setTimeout(CAPTIVE_PORTAL_TIMEOUT); // if nobody logs in to the portal, continue after timeout
-  wifiManager.setConnectTimeout(CAPTIVE_PORTAL_TIMEOUT);
-  // wifiManager.setSaveConnect(true);
-  wifiManager.setAPClientCheck(true); // avoid timeout if client connected to softap
-  Serial.println("[main] Start capatitive portal");
-
-  if (wifiManager.startConfigPortal("Abacus eWall", "12345678"))
-  {
-    return true;
-  }
-  else
-  {
-    return wifiManager.autoConnect("Abacus eWall", "12345678");
-  }
-}
+// MQTT and Time setup
 
 // Return Register Values from the ATM90E32, or ATM90E36, - and Display
 void DisplayRegisters(boolean DisplayFull = true)
@@ -482,7 +421,6 @@ void DisplayRegisters(boolean DisplayFull = true)
 // **************** SETUP ****************
 void setup()
 {
-
   // Stabalise
   delay(250);
 
@@ -499,18 +437,17 @@ void setup()
     delay(30000);
     ESP.restart();
   }
-  Serial.println("Connected");
+  Serial.println("WIFI Connected");
+
+  client.setServer(mqtt_server, 1883);
+  client.setCallback(callback);
+
+  // Initialize and get the time
+  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+  printLocalTime();
 
   // IPEM Board Port Configuration
   ConfigureBoard();
-
-  // Hardware Tests
-  if (DisableHardwareTest == false)
-  {
-    // Peripherals Test
-    PrintUnderline("Peripherals Test");
-    TestRGB(); // Cycle RGB LED
-  }
 
   // Check DCV_IN
   CheckDCVINVoltage();
@@ -558,6 +495,15 @@ void setup()
 // **************** LOOP ****************
 void loop() // Future - ISRs To Be Added
 {
+  repeatedCall();
+
+  if (!client.connected())
+  {
+    reconnect();
+  }
+  client.loop();
+
+  printLocalTime();
 
   String sDIR = "";
 
@@ -569,18 +515,6 @@ void loop() // Future - ISRs To Be Added
     PWM_Test();
   }
 
-  // Force Continuous Test DAC Sinewave Cycle Loop etc. Force OFF EnableDACLocal EnableDACRemote
-  // if (EnableDACTestOutput == true)
-  // {
-  // EnableDACLocal = false;
-  // EnableDACRemote = false;
-
-  //  0 = Stepped Voltage  1 = SineWave @ 10Hz  2 = Fixed Output Voltage @ 1.5V
-  // DAC_Test(0); // Stepped Voltage Output.  Ramps up and Down
-  // DAC_Test(1, 10);      // SineWave  // 1, 10, 50 Hz etc
-  // DAC_Test(2, 1.5); // Fixed DAC Ouput Voltage.  Example 1.5V Output
-  // }
-
   // Simply DisplayRegisters on Loop if Enabled
   if (EnableBasicLoop == true)
   {
@@ -588,12 +522,8 @@ void loop() // Future - ISRs To Be Added
     Serial.println("- - - / / - - -\n");
   }
 
-  // Simple test for Loop to bypass EnableBasicLoop if User Button Pressed for ~ 1 Second.  Ignore if ESP32 DAC used.
-  // if (digitalRead(User_Button) == LOW && EnableDACTestOutput == false && EnablePWMLocal == false && EnableDACRemote == false)
-  // {
   DisplayRegisters();
   Serial.println("- - - / / - - -\n");
-  // }
 
   DisplayRegisters(false); // Refresh Values and Display.  Default false = Mute Expanded Info to Serial
 
@@ -656,6 +586,32 @@ void loop() // Future - ISRs To Be Added
 
     Serial.print(LineVoltage1);
     Serial.println(" V " + sDIR);
+
+    StaticJsonDocument<384> esp_data;
+
+    esp_data["Time"] = ntp_time;
+    esp_data["VoltageA"] = String(eic.GetLineVoltage1()) + "V";
+    esp_data["VoltageB"] = String(eic.GetLineVoltage2()) + "V";
+    esp_data["VoltageC"] = String(eic.GetLineVoltage3()) + "V";
+    esp_data["CurrentA"] = String(eic.GetLineCurrentCT1()) + "A";
+    esp_data["CurrentB"] = String(eic.GetLineCurrentCT2()) + "A";
+    esp_data["CurrentC"] = String(eic.GetLineCurrentCT3()) + "A";
+    esp_data["ActivePowerA"] = String(eic.GetActivePowerCT1()) + "W";
+    esp_data["ActivePowerB"] = String(eic.GetActivePowerCT2()) + "W";
+    esp_data["ActivePowerC"] = String(eic.GetActivePowerCT3()) + "W";
+    esp_data["TotalActivePower"] = String(eic.GetTotalActivePower()) + "W";
+    esp_data["ReactivePowerA"] = String(eic.GetReactivePowerCT1()) + "W";
+    esp_data["ReactivePowerB"] = String(eic.GetReactivePowerCT2()) + "W";
+    esp_data["ReactivePowerC"] = String(eic.GetReactivePowerCT3()) + "W";
+    esp_data["PowerFactorA"] = String(eic.GetPowerFactorCT1()) + "W";
+    esp_data["PowerFactorB"] = String(eic.GetPowerFactorCT2()) + "W";
+    esp_data["PowerFactorC"] = String(eic.GetPowerFactorCT3()) + "W";
+    esp_data["TotalActiveFundPower"] = String(eic.GetTotalActiveFundPower()) + "W";
+
+    char output[384];
+    serializeJson(esp_data, output);
+
+    client.publish("updates", output);
   }
   else
   {
