@@ -14,12 +14,7 @@
 #include <SPI.h>
 #include <Wire.h>
 #include <driver/adc.h>
-#include <EmonLib.h>
-// #include <IPEM_EEPROM.h>
-// #include <GyverOLED.h>
 #include <ATM90E3x.h>
-#include <PWM.h>
-// #include <DAC.h> // Future Option
 
 // ****************  VARIABLES / DEFINES / STATIC / STRUCTURES / CONSTANTS ****************
 
@@ -29,11 +24,11 @@ String AppAcronym = "IPEM";
 String AppName = "DitroniX IPEM-1 ATM90E32 ATM90E36 IoT Power Energy Monitor Board - Development Code";
 
 // App USER
-String LocationName = "House"; // Enter Location of Device such as House, Solar etc.  Used for Serial Monitor and OLED.
+String LocationName = "Office"; // Enter Location of Device such as House, Solar etc.  Used for Serial Monitor and OLED.
 
 // Constants USER
 int VoltageRawFactor = 0;                // ADC Raw Adjustment for 2048 @ 1.65V Default 0
-float VoltageFactor = 39;                // Adjust as needed for Voltage Calibration. Default 39
+float VoltageFactor = 100;                // Adjust as needed for Voltage Calibration. Default 39
 const int AverageSamples = 25;           // Average Multi-Samples.  Default 25
 const int AverageDelay = 20;             // Average Multi-Sample Delay. Default 20
 boolean EnableAveraging = true;          // Set to true to enable averaging (ESP32 DCV).  Default true
@@ -58,17 +53,11 @@ float EmonThreshold = 0.2;   // Used to squelch low values. Default 0.2
 // Constants Application
 uint64_t chipid = ESP.getEfuseMac(); // Get ChipID (essentially the MAC address)
 
-// OLED Instance. You will need to select your OLED Display.   Uncomment/Comment as needed.
-// GyverOLED<SSD1306_128x32, OLED_BUFFER> oled; // 0.6"
-// GyverOLED<SSD1306_128x64, OLED_NO_BUFFER> oled; // 0.6"
-// GyverOLED<SSH1106_128x64> oled; // 1.1"
-// GyverOLED<SSD1306_128x64, OLED_NO_BUFFER> oled; // 1.1"
-// GyverOLED<SSD1306_128x32, OLED_NO_BUFFER> oled;
-// GyverOLED<SSD1306_128x64, OLED_BUFFER> oled;
+
 
 // Create an Energy Monitor Library Instance (Used ONLY for CT4).  Ignore if CT4 Isolated or used for GPIO
 #if CT4_CONFIG == CT4_ESP || ATM90DEVICE == ATM90E32_DEVICE
-EnergyMonitor emon1;
+// EnergyMonitor emon1;
 #endif
 
 // **************** ATM90Ex CALIBRATION SETTINGS GUIDE ****************
@@ -85,28 +74,29 @@ unsigned short LineFreq = 389; // MMode0 0x33 _lineFreq | Default 389
 
 // Voltage and Current - Overall Gain
 // PMPGA 0x17              DDV3V2V1I4I3I2I1  // D = DPGA       4/3/2/1 = V1-4 = I1-4
-unsigned short PGAGain = 0b0101010101111111; // PMPGA 0x17  | DPGA Gain = 2 and PGA Gain = 1
+unsigned short PGAGain = 0b0101010101111111; // PMPGA 0x17  | DPGA Gain = 2 and PGA Gain = 1 (original)
+// unsigned short PGAGain = 0b0000000000000000; // PMPGA 0x17  | DPGA Gain = 2 and PGA Gain = 1
 
 // Voltage.
 // This is calculated based on the Bell Transformer DAT01 on 12V setting @ ~19V RMS.  Need to allow for +/- ~ 1% Tolerance.
 // Calculations: Base value for 240V is 38800.  To increase/decrease change by Approx. ~100 per 1.0 V RMS.
 // Calculations: Base value for 120V is 20200.  To increase/decrease change by Approx. ~100 per 1.0 V RMS.
 #if ATM_SINGLEVOLTAGE == true
-unsigned short VoltageGain1 = 38800;        // uGain = UgainA | 0x61	0x0002 40500 20000 42620 (10000 = ~60V)
+unsigned short VoltageGain1 = 50455;        // uGain = UgainA | 0x61	0x0002 40500 20000 42620 (10000 = ~60V)
 unsigned short VoltageGain2 = VoltageGain1; // Duplicate V1 Values to V2 and V3.
 unsigned short VoltageGain3 = VoltageGain1; // Duplicate V1 Values to V2 and V3.
 #else
-unsigned short VoltageGain1 = 38800; // uGain = UgainA | 38800 Default Starting Value
-unsigned short VoltageGain2 = 38800; // uGain = UgainB | 38800 Default Starting Value
-unsigned short VoltageGain3 = 38800; // uGain = UgainC | 38800 Default Starting Value
+unsigned short VoltageGain1 = 50540; // uGain = UgainA | 38800 Default Starting Value
+unsigned short VoltageGain2 = 50455; // uGain = UgainB | 38800 Default Starting Value
+unsigned short VoltageGain3 = 50331; // uGain = UgainC | 38800 Default Starting Value
 #endif
 
 // Current
 // This is calculated based on the YDH? 100A/50mA  Need to allow for +/- ~ 1% Tolerance.  Trim values are fine!
 // Calculations: Base value for CT100/50 Mid Range 38500.  To increase/decrease change by Approx. ~500 per 0.01A RMS
-unsigned short CurrentGainCT1 = 38500; // IgainA 0x62	| CT100/50 Mid Range 38500
-unsigned short CurrentGainCT2 = 38500; // IgainA 0x62	| CT100/50 Mid Range 38500
-unsigned short CurrentGainCT3 = 38500; // IgainA 0x62	| CT100/50 Mid Range 38500
+unsigned short CurrentGainCT1 = 20023; // IgainA 0x62	| CT100/50 Mid Range 38500
+unsigned short CurrentGainCT2 = 20166; // IgainA 0x62	| CT100/50 Mid Range 38500
+unsigned short CurrentGainCT3 = 20443; // IgainA 0x62	| CT100/50 Mid Range 38500
 #endif
 
 #if ATM90DEVICE == ATM90E36_DEVICE
@@ -144,11 +134,13 @@ unsigned short CurrentGainCTN = 33500; // IgainA 0x6E
 #endif
 
 // Variables
-float TemperatureC;      // Temperature
-float TemperatureF;      // Temperature
-int VoltageSensorRaw;    // ADC Raw Voltage Value
-float VoltageCalculated; // Calculated Voltage Value
-int VoltagePercentage;   // Voltage Percentage
+float TemperatureC;           // Temperature
+float TemperatureF;           // Temperature
+int VoltageSensorRaw;         // ADC Raw Voltage Value
+float VoltageCalculated;      // Calculated Voltage Value
+int VoltagePercentage;        // Voltage Percentage
+boolean OLED_Enabled = false; // Auto Enabled if OLED Detected on I2C Scan
+int OLEDCount;                // OLED Information Counter
 
 // Variables ATM
 float LineVoltage1, LineVoltage2, LineVoltage3, LineVoltageTotal, LineVoltageAverage;
@@ -184,41 +176,15 @@ float PCBTemperature; // PCB NTC Temperature
 ATM90E3x eic{}; //
 
 // **************** ESP32 INPUTS ****************
-#define ATM_WO 25      // GPIO 25 (DAC1 ADC2_CH8)
-#define ATM_CF1 27     // GPIO 27 (Digital ADC 2 CH7)
-#define ATM_CF2 32     // GPIO 32 (Digital ADC 1 CH4)
-#define ATM_CF3 33     // GPIO 33 (Digital ADC 1 CH5)
-#define ATM_CF4 34     // GPIO 34 (Digital ADC 1 CH6)
-#define ATM_IRQ0 13    // GPIO 13 (GPIO)
-#define ATM_IRQ1 14    // GPIO 14 (GPIO)
-#define DCV_IN 36      // GPIO 36 (Analog VP / ADC 1 CH0)
-#define NTC_IN 39      // GPIO 39/VN (Analog ADC 1 CH3)
-#define User_Button 26 // GPIO 26 (DAC2 ADC2_CH9)
-
-// **************** ESP32 OUTPUTS ****************
-#define GP12_DMA_CTRL 12 // GP12 and Auto DMA Control (MUST be LOW on ESP32 Boot)
-#define LED_Red 2        // Red LED
-#define LED_Green 4      // Green LED
-#define LED_Blue 15      // Blue LED
-
-// **************** CT4 ESP32 GPIO 35 FUNCTION ****************
-#define CT4_IN 35 // GPIO 35 (Digital ADC 1 CH7. NOT PWM!)
-
-// **************** ESP32 GPIO or UART2 ****************
-#define USR_GP16_RX_PWM 16 // GPIO 16 (Digital TTL_RXD PWM GPIO)
-#define USR_GP17_TX_PWM 17 // GPIO 17 (Digital TTL_TXD PWM GPIO)
-
-// Define I2C (Expansion Port)
-#define I2C_SDA 21
-#define I2C_SCL 22
-
-/*
-  References to ESP32 SPI Expansion Port to ATM90E3x
-  * CS = 5
-  * MISO = 19
-  * MOSI = 23
-  * SCK = 18
- */
+#define ATM_WO 35      // GPIO 25 (DAC1 ADC2_CH8)
+#define ATM_CF1 39     // GPIO 27 (Digital ADC 2 CH7)
+#define ATM_CF2 38     // GPIO 32 (Digital ADC 1 CH4)
+#define ATM_CF3 37     // GPIO 33 (Digital ADC 1 CH5)
+#define ATM_CF4 36     // GPIO 34 (Digital ADC 1 CH6)
+#define ATM_IRQ0 4    // GPIO 13 (GPIO)
+#define ATM_IRQ1 42    // GPIO 14 (GPIO)
+#define DCV_IN -1     // GPIO 36 (Analog VP / ADC 1 CH0)
+#define NTC_IN -1      // GPIO 39/VN (Analog ADC 1 CH3)
 
 // **************** FUNCTIONS AND ROUTINES ****************
 
@@ -309,20 +275,6 @@ void PrintUnderline(String sText)
   Serial.println("");
 } // PrintUnderline
 
-// Equally Rough and Ready Dash Separator
-void PrintSeparator(String sText)
-{
-  int count = 0;
-
-  while (count <= (sText.length() / 2) + 1)
-  {
-    Serial.print("- ");
-    count++;
-  }
-  Serial.println("");
-
-  Serial.println(sText);
-} // PrintSeparator
 
 void ConfigureBoard()
 {
@@ -335,38 +287,6 @@ void ConfigureBoard()
   pinMode(ATM_IRQ0, INPUT);
   pinMode(ATM_IRQ1, INPUT);
   pinMode(ATM_WO, INPUT);
-  pinMode(User_Button, INPUT_PULLUP);
-
-  // Configure GPIO Outputs
-  pinMode(GP12_DMA_CTRL, OUTPUT);
-  pinMode(LED_Red, OUTPUT);
-  pinMode(LED_Green, OUTPUT);
-  pinMode(LED_Blue, OUTPUT);
-  // pinMode(CT4_IN, OUTPUT);
-
-  // LEDs Default Off State
-  digitalWrite(LED_Red, HIGH);
-  digitalWrite(LED_Green, HIGH);
-  digitalWrite(LED_Blue, HIGH);
-
-  // Initialize I2C
-  Wire.begin(I2C_SDA, I2C_SCL);
-
-  // Initialize EEPROM
-  // InitializeEEPROM();
-
-  // Initialise PWM
-  InitialisePWM();
-
-  // Initialise DAC
-  // InitialiseDAC();
-
-// Initialize ADC and EmonLib.
-#if CT4_CONFIG == CT4_ESP || ATM90DEVICE == ATM90E32_DEVICE
-  // adc1_config_channel_atten(ADC1_CHANNEL_7, ADC_ATTEN_DB_11);
-  analogReadResolution(ADC_BITS);
-  emon1.current(CT4_IN, EmonCalibration);
-#endif
 
 } // ConfigureBoard
 
@@ -500,32 +420,117 @@ void TestRGB()
   delay(100);
 
   // Red
-  digitalWrite(LED_Red, LOW);
-  delay(500);
-  digitalWrite(LED_Red, HIGH);
-  delay(100);
+  // digitalWrite(LED_Red, LOW);
+  // delay(500);
+  // digitalWrite(LED_Red, HIGH);
+  // delay(100);
 
   // Green
-  digitalWrite(LED_Green, LOW);
-  delay(500);
-  digitalWrite(LED_Green, HIGH);
-  delay(100);
+  // digitalWrite(LED_Green, LOW);
+  // delay(500);
+  // digitalWrite(LED_Green, HIGH);
+  // delay(100);
 
   // Blue
-  digitalWrite(LED_Blue, LOW);
-  delay(500);
-  digitalWrite(LED_Blue, HIGH);
-  delay(100);
+  // digitalWrite(LED_Blue, LOW);
+  // delay(500);
+  // digitalWrite(LED_Blue, HIGH);
+  // delay(100);
 
   // White
-  digitalWrite(LED_Red, LOW);
-  digitalWrite(LED_Green, LOW);
-  digitalWrite(LED_Blue, LOW);
-  delay(500);
-  digitalWrite(LED_Red, HIGH);
-  digitalWrite(LED_Green, HIGH);
-  digitalWrite(LED_Blue, HIGH);
+  // digitalWrite(LED_Red, LOW);
+  // digitalWrite(LED_Green, LOW);
+  // digitalWrite(LED_Blue, LOW);
+  // delay(500);
+  // digitalWrite(LED_Red, HIGH);
+  // digitalWrite(LED_Green, HIGH);
+  // digitalWrite(LED_Blue, HIGH);
 } // TestRGB
+
+// I2C Bus Scanner
+void ScanI2CBus()
+{
+
+  byte error, address;
+  int nDevices;
+
+  Serial.println("Scanning I2C Bus for Devices ...");
+
+  nDevices = 0;
+  for (address = 1; address < 127; address++)
+  {
+    Wire.beginTransmission(address);
+    error = Wire.endTransmission();
+    if (error == 0)
+    {
+      Serial.print(" * I2C device found at address Decimal ");
+      if (address < 16)
+      {
+        Serial.print("0");
+      }
+      Serial.print(address);
+      Serial.print(" = Hex 0x");
+      Serial.print(address, HEX);
+
+      switch (address)
+      {
+      case 0x18 ... 0x1F:
+        Serial.print(" MCP9808 Temerature Sensor");
+        break;
+      case 0x20 ... 0x27:
+        Serial.print(" GPIO Expander");
+        break;
+      case 0x28 ... 0x2B:
+        Serial.print(" Digital Pot");
+        break;
+      case 0x38:
+        Serial.print(" Humidity/Temperature Sensor");
+        break;
+      case 0x40 ... 0x47:
+        Serial.print(" Humidity/Temperature Sensor");
+        break;
+      case 0x48 ... 0x4B:
+        Serial.print(" ADS1115, ADS7828 or Sensor");
+        break;
+      case 0x4C ... 0x4F:
+        Serial.print(" Sensor");
+        break;
+      case 0x3C ... 0x3D:
+        Serial.print(" OLED");
+        OLED_Enabled = true;
+        break;
+      case 0x50 ... 0x5F:
+        Serial.print(" EEPROM");
+        break;
+      case 0x76 ... 0x77:
+        Serial.print(" BMP/BME Temerature/Humidity/Barometric");
+        break;
+      }
+      Serial.println();
+
+      nDevices++;
+    }
+    else if (error == 4)
+    {
+      Serial.print(" * Unknown error at address Decimal ");
+      if (address < 16)
+      {
+        Serial.print("0");
+      }
+      Serial.print(address);
+      Serial.print(" = Hex 0x");
+      Serial.println(address, HEX);
+    }
+  }
+  if (nDevices == 0)
+  {
+    Serial.println(" * No I2C devices found. Possible Hardware Issue?");
+  }
+  else
+  {
+    Serial.println(" * I2C Bus Scan Complete\n");
+  }
+} // ScanI2CBus
 
 // Read PCB NTC Thermister on VN
 void ReadPCBTemperature()
@@ -588,6 +593,7 @@ void CheckDCVINVoltage()
 
   // DCV_IN ReadADCVoltage
   yield();
+  VoltageCalculated = 6;
   if (VoltageCalculated < 5)
     Serial.print("* IPEM Board appears to be only USB Powered.\n* Not all ATM functions will work in this mode\n");
   if (VoltageCalculated > 5)
@@ -607,12 +613,12 @@ void CheckDCVINVoltage()
 void ReadCT4Current()
 {
 #if CT4_CONFIG == CT4_ESP || ATM90DEVICE == ATM90E32_DEVICE
-  LineCurrentCT4 = emon1.calcIrms(EmonCalcIrms); // Calculate Irms only.
-  LineCurrentCT4 = LineCurrentCT4 / 1000;
+  // LineCurrentCT4 = emon1.calcIrms(EmonCalcIrms); // Calculate Irms only.
+  // LineCurrentCT4 = LineCurrentCT4 / 1000;
 
   // CT4 Squelch
-  LineCurrentCT4 = NoiseFilterSquelch(LineCurrentCT4, EmonThreshold);
+  // LineCurrentCT4 = NoiseFilterSquelch(LineCurrentCT4, EmonThreshold);
 
-  CalculatedPowerCT4 = LineCurrentCT4 * LineVoltage1; // Use Voltage Input 1 to Calculate Power for CT4
+  // CalculatedPowerCT4 = LineCurrentCT4 * LineVoltage1; // Use Voltage Input 1 to Calculate Power for CT4
 #endif
 } // ReadCT4Current
